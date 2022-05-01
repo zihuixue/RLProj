@@ -51,6 +51,7 @@ class PPOTrainer(BaseRLTrainer):
         self.actor_critic = None
         self.agent = None
         self.envs = None
+        self.depth_sample_freq = 0
 
     def _setup_actor_critic_agent(self, ppo_cfg: Config, observation_space=None) -> None:
         r"""Sets up actor critic and agent for PPO.
@@ -154,6 +155,18 @@ class PPOTrainer(BaseRLTrainer):
 
         t_update_stats = time.time()
         batch = batch_obs(observations)
+        if self.depth_sample_freq > 0:
+            new_batch = {}
+            for k, v in batch.items():
+                # new_batch[k] = torch.zeros_like(v)
+                if k == 'depth':
+                    depth_mask = (current_episode_step % self.depth_sample_freq == 0).int().squeeze()
+                    depth = (v.permute(3, 1, 2, 0) * depth_mask).permute(3, 1, 2, 0)
+                    new_batch[k] = depth
+                else:
+                    new_batch[k] = v
+        else:
+            new_batch = batch
         rewards = torch.tensor(rewards, dtype=torch.float)
         rewards = rewards.unsqueeze(1)
 
@@ -166,6 +179,7 @@ class PPOTrainer(BaseRLTrainer):
 
         current_episode_reward += rewards
         current_episode_step += 1
+
         # current_episode_reward is accumulating rewards across multiple updates,
         # as long as the current episode is not finished
         # the current episode reward is added to the episode rewards only if the current episode is done
@@ -178,7 +192,7 @@ class PPOTrainer(BaseRLTrainer):
         current_episode_step *= masks
 
         rollouts.insert(
-            batch,
+            new_batch,
             recurrent_hidden_states,
             actions,
             actions_log_probs,

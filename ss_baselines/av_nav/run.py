@@ -15,7 +15,7 @@ warnings.filterwarnings('ignore', category=FutureWarning)
 warnings.filterwarnings('ignore', category=UserWarning)
 import torch
 
-import soundspaces
+# import soundspaces
 from ss_baselines.common.baseline_registry import baseline_registry
 from ss_baselines.av_nav.config.default import get_config
 from ss_baselines.av_wan.run import find_best_ckpt_idx
@@ -72,6 +72,7 @@ def main():
         default=-1,
         help="Evaluation interval of checkpoints",
     )
+    parser.add_argument("--depth-sample", default=0, type=int, help='sample depth every % steps')
     args = parser.parse_args()
 
     if args.eval_best:
@@ -85,7 +86,10 @@ def main():
     trainer_init = baseline_registry.get_trainer(config.TRAINER_NAME)
     assert trainer_init is not None, f"{config.TRAINER_NAME} is not supported"
     trainer = trainer_init(config)
-    torch.set_num_threads(1)
+    if args.depth_sample > 0:
+        trainer.depth_sample_freq = args.depth_sample
+        print(f'Sample depth every {args.depth_sample} steps')
+    # torch.set_num_threads(1)
 
     level = logging.DEBUG if config.DEBUG else logging.INFO
     logging.basicConfig(level=level, format='%(asctime)s, %(levelname)s: %(message)s',
