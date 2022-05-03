@@ -5,6 +5,7 @@
 
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
+import pdb
 import abc
 
 import torch
@@ -23,7 +24,7 @@ class Policy(nn.Module):
     def __init__(self, net, dim_actions):
         super().__init__()
         self.net = net
-        self.dim_actions = dim_actions
+        self.dim_actions = dim_actions * 2
 
         self.action_distribution = CategoricalNet(
             self.net.output_size, self.dim_actions

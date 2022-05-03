@@ -5,6 +5,7 @@
 
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
+import pdb
 
 import os
 import time
@@ -52,6 +53,7 @@ class PPOTrainer(BaseRLTrainer):
         self.agent = None
         self.envs = None
         self.depth_sample_freq = 0
+        self.depth_penalty = 0.0
 
     def _setup_actor_critic_agent(self, ppo_cfg: Config, observation_space=None) -> None:
         r"""Sets up actor critic and agent for PPO.
@@ -118,8 +120,10 @@ class PPOTrainer(BaseRLTrainer):
         return torch.load(checkpoint_path, *args, **kwargs)
 
     def _collect_rollout_step(
-        self, rollouts, current_episode_reward, current_episode_step, episode_rewards,
-            episode_spls, episode_counts, episode_steps
+        self, rollouts, current_episode_reward, current_episode_step, 
+        current_episode_depth_enable_rate,
+        episode_rewards, episode_spls, episode_counts, episode_steps, 
+        episode_depth_enable_rate
     ):
         pth_time = 0.0
         env_time = 0.0
@@ -147,7 +151,8 @@ class PPOTrainer(BaseRLTrainer):
 
         t_step_env = time.time()
 
-        outputs = self.envs.step([a[0].item() for a in actions])
+        num_actions = self.envs.action_spaces[0].n
+        outputs = self.envs.step([a[0].item() % num_actions for a in actions])
         observations, rewards, dones, infos = [list(x) for x in zip(*outputs)]
         logging.debug('Reward: {}'.format(rewards[0]))
 
@@ -155,7 +160,9 @@ class PPOTrainer(BaseRLTrainer):
 
         t_update_stats = time.time()
         batch = batch_obs(observations)
-        if self.depth_sample_freq > 0:
+        rewards = torch.tensor(rewards, dtype=torch.float)
+        sw = torch.zeros_like(rewards)
+        if self.depth_sample_freq != 0:
             new_batch = {}
             for k, v in batch.items():
                 # new_batch[k] = torch.zeros_like(v)
@@ -163,11 +170,21 @@ class PPOTrainer(BaseRLTrainer):
                     depth_mask = (current_episode_step % self.depth_sample_freq == 0).int().squeeze()
                     depth = (v.permute(3, 1, 2, 0) * depth_mask).permute(3, 1, 2, 0)
                     new_batch[k] = depth
+                    sw = depth_mask
+                else:
+                    new_batch[k] = v
+        elif self.depth_penalty != 0:
+            sw = (actions // num_actions).cpu().squeeze()
+            rewards = rewards + self.depth_penalty * sw
+            new_batch = {}
+            for k, v in batch.items():
+                if k == 'depth':
+                    new_batch[k] = v * sw.view(-1, 1, 1, 1)
                 else:
                     new_batch[k] = v
         else:
+            sw[...] = True
             new_batch = batch
-        rewards = torch.tensor(rewards, dtype=torch.float)
         rewards = rewards.unsqueeze(1)
 
         masks = torch.tensor(
@@ -179,6 +196,7 @@ class PPOTrainer(BaseRLTrainer):
 
         current_episode_reward += rewards
         current_episode_step += 1
+        current_episode_depth_enable_rate += (sw.float().view(-1, 1) - current_episode_depth_enable_rate) / current_episode_step
 
         # current_episode_reward is accumulating rewards across multiple updates,
         # as long as the current episode is not finished
@@ -188,8 +206,10 @@ class PPOTrainer(BaseRLTrainer):
         episode_spls += (1 - masks) * spls
         episode_steps += (1 - masks) * current_episode_step
         episode_counts += 1 - masks
+        episode_depth_enable_rate += (1 - masks) * current_episode_depth_enable_rate
         current_episode_reward *= masks
         current_episode_step *= masks
+        current_episode_depth_enable_rate *= masks
 
         rollouts.insert(
             new_batch,
@@ -289,12 +309,15 @@ class PPOTrainer(BaseRLTrainer):
         episode_spls = torch.zeros(self.envs.num_envs, 1)
         episode_steps = torch.zeros(self.envs.num_envs, 1)
         episode_counts = torch.zeros(self.envs.num_envs, 1)
+        episode_depth_enable_rate = torch.zeros(self.envs.num_envs, 1)
+        current_episode_depth_enable_rate = torch.zeros(self.envs.num_envs, 1)
         current_episode_reward = torch.zeros(self.envs.num_envs, 1)
         current_episode_step = torch.zeros(self.envs.num_envs, 1)
         window_episode_reward = deque(maxlen=ppo_cfg.reward_window_size)
         window_episode_spl = deque(maxlen=ppo_cfg.reward_window_size)
         window_episode_step = deque(maxlen=ppo_cfg.reward_window_size)
         window_episode_counts = deque(maxlen=ppo_cfg.reward_window_size)
+        window_episode_depth_rate = deque(maxlen=ppo_cfg.reward_window_size)
 
         t_start = time.time()
         env_time = 0
@@ -324,10 +347,12 @@ class PPOTrainer(BaseRLTrainer):
                         rollouts,
                         current_episode_reward,
                         current_episode_step,
+                        current_episode_depth_enable_rate,
                         episode_rewards,
                         episode_spls,
                         episode_counts,
-                        episode_steps
+                        episode_steps,
+                        episode_depth_enable_rate,
                     )
                     pth_time += delta_pth_time
                     env_time += delta_env_time
@@ -342,6 +367,7 @@ class PPOTrainer(BaseRLTrainer):
                 window_episode_spl.append(episode_spls.clone())
                 window_episode_step.append(episode_steps.clone())
                 window_episode_counts.append(episode_counts.clone())
+                window_episode_depth_rate.append(episode_depth_enable_rate.clone())
 
                 losses = [value_loss, action_loss, dist_entropy]
                 stats = zip(
@@ -387,15 +413,19 @@ class PPOTrainer(BaseRLTrainer):
                     window_rewards = (
                         window_episode_reward[-1] - window_episode_reward[0]
                     ).sum()
+                    window_depth_rate = (
+                        window_episode_depth_rate[-1] - window_episode_depth_rate[0]
+                    ).sum()
                     window_counts = (
                         window_episode_counts[-1] - window_episode_counts[0]
                     ).sum()
 
                     if window_counts > 0:
                         logger.info(
-                            "Average window size {} reward: {:3f}".format(
+                            "Average window size {} reward: {:3f} depth rate: {:.3f}".format(
                                 len(window_episode_reward),
                                 (window_rewards / window_counts).item(),
+                                (window_depth_rate / window_counts).item(),
                             )
                         )
                     else:

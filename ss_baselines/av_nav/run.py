@@ -73,6 +73,7 @@ def main():
         help="Evaluation interval of checkpoints",
     )
     parser.add_argument("--depth-sample", default=0, type=int, help='sample depth every % steps')
+    parser.add_argument("--depth_penalty", default=0, type=float)
     args = parser.parse_args()
 
     if args.eval_best:
@@ -89,6 +90,7 @@ def main():
     if args.depth_sample > 0:
         trainer.depth_sample_freq = args.depth_sample
         print(f'Sample depth every {args.depth_sample} steps')
+    trainer.depth_penalty = args.depth_penalty
     # torch.set_num_threads(1)
 
     level = logging.DEBUG if config.DEBUG else logging.INFO
