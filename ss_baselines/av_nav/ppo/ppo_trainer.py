@@ -545,6 +545,7 @@ class PPOTrainer(BaseRLTrainer):
         ]
         if len(self.config.VIDEO_OPTION) > 0:
             os.makedirs(self.config.VIDEO_DIR, exist_ok=True)
+        num_actions = self.envs.action_spaces[0].n
 
         t = tqdm(total=self.config.TEST_EPISODE_COUNT)
         while (
@@ -564,12 +565,19 @@ class PPOTrainer(BaseRLTrainer):
 
                 prev_actions.copy_(actions)
 
-            outputs = self.envs.step([a[0].item() for a in actions])
+            outputs = self.envs.step([a[0].item() % num_actions for a in actions])
+            sw = torch.zeros((self.envs.num_envs,))
+            if self.depth_penalty != 0:
+                sw = (actions // num_actions).cpu().squeeze().view(self.envs.num_envs,)
+            else:
+                sw[...] = True
 
             observations, rewards, dones, infos = [
                 list(x) for x in zip(*outputs)
             ]
             for i in range(self.envs.num_envs):
+                if not sw[i].item():
+                    observations[i]['depth'][...] = 0
                 if len(self.config.VIDEO_OPTION) > 0:
                     if config.TASK_CONFIG.SIMULATOR.CONTINUOUS_VIEW_CHANGE and 'intermediate' in observations[i]:
                         for observation in observations[i]['intermediate']:
@@ -577,7 +585,7 @@ class PPOTrainer(BaseRLTrainer):
                             rgb_frames[i].append(frame)
                         del observations[i]['intermediate']
 
-                    if "rgb" not in observations[i]:
+                    if "rgb" not in observations[i] or not sw[i]:
                         observations[i]["rgb"] = np.zeros((self.config.DISPLAY_RESOLUTION,
                                                            self.config.DISPLAY_RESOLUTION, 3))
                     frame = observations_to_image(observations[i], infos[i])
@@ -617,6 +625,7 @@ class PPOTrainer(BaseRLTrainer):
                     episode_stats['geodesic_distance'] = current_episodes[i].info['geodesic_distance']
                     episode_stats['euclidean_distance'] = norm(np.array(current_episodes[i].goals[0].position) -
                                                                np.array(current_episodes[i].start_position))
+                    episode_stats['switch_rate'] = sw[i].item()
                     logging.debug(episode_stats)
                     current_episode_reward[i] = 0
                     # use scene_id + episode_id as unique id for storing stats
@@ -694,6 +703,7 @@ class PPOTrainer(BaseRLTrainer):
 
         episode_reward_mean = aggregated_stats["reward"] / num_episodes
         episode_metrics_mean = {}
+        self.metric_uuids.append("switch_rate")
         for metric_uuid in self.metric_uuids:
             episode_metrics_mean[metric_uuid] = aggregated_stats[metric_uuid] / num_episodes
 
