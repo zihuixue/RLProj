@@ -1,1 +1,1 @@
-python ss_baselines/av_nav/run.py --exp-config ss_baselines/av_nav/config/audionav/replica/train_telephone/audiopointgoal_depth.yaml --depth-sample 2 --model-dir data/models/replica/audiopointgoal_depth_sample2
+python ss_baselines/av_nav/run.py --exp-config ss_baselines/av_nav/config/audionav/replica/train_telephone/audiopointgoal_depth.yaml --depth-sample 2 --model-dir data/models/replica/audiopointgoal_depth_sample2-run2

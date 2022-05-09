@@ -465,8 +465,8 @@ class PPOTrainer(BaseRLTrainer):
         )
         if self.config.DISPLAY_RESOLUTION != model_resolution:
             observation_space = self.envs.observation_spaces[0]
-            observation_space.spaces['depth'].shape = (model_resolution, model_resolution, 1)
-            observation_space.spaces['rgb'].shape = (model_resolution, model_resolution, 1)
+            observation_space.spaces['depth']._shape = (model_resolution, model_resolution, 1)
+            observation_space.spaces['rgb']._shape = (model_resolution, model_resolution, 1)
         else:
             observation_space = self.envs.observation_spaces[0]
         self._setup_actor_critic_agent(ppo_cfg, observation_space)
@@ -490,6 +490,9 @@ class PPOTrainer(BaseRLTrainer):
         batch = batch_obs(observations, self.device)
 
         current_episode_reward = torch.zeros(
+            self.envs.num_envs, 1, device=self.device
+        )
+        current_episode_step = torch.zeros(
             self.envs.num_envs, 1, device=self.device
         )
 
@@ -556,7 +559,20 @@ class PPOTrainer(BaseRLTrainer):
 
             if config.DISPLAY_RESOLUTION != model_resolution:
                 resize_observation(observations, model_resolution)
-            batch = batch_obs(observations, self.device)
+            old_batch = batch_obs(observations, self.device)
+
+            if self.depth_sample_freq > 0:
+                batch = {}
+                for k, v in old_batch.items():
+                    # new_batch[k] = torch.zeros_like(v)
+                    if k == 'depth':
+                        depth_mask = (current_episode_step % self.depth_sample_freq == 0).int().squeeze()
+                        depth = (v.permute(3, 1, 2, 0) * depth_mask).permute(3, 1, 2, 0)
+                        batch[k] = depth
+                    else:
+                        batch[k] = v
+            else:
+                batch = old_batch
 
             not_done_masks = torch.tensor(
                 [[0.0] if done else [1.0] for done in dones],
@@ -568,6 +584,7 @@ class PPOTrainer(BaseRLTrainer):
                 rewards, dtype=torch.float, device=self.device
             ).unsqueeze(1)
             current_episode_reward += rewards
+            current_episode_step += 1
             next_episodes = self.envs.current_episodes()
             envs_to_pause = []
             for i in range(self.envs.num_envs):
@@ -589,6 +606,7 @@ class PPOTrainer(BaseRLTrainer):
                                                                np.array(current_episodes[i].start_position))
                     logging.debug(episode_stats)
                     current_episode_reward[i] = 0
+                    current_episode_step[i] = 0
                     # use scene_id + episode_id as unique id for storing stats
                     stats_episodes[
                         (

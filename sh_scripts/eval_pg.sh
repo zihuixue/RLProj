@@ -1,0 +1,1 @@
+python ss_baselines/av_nav/run.py --run-type eval --exp-config ss_baselines/av_nav/config/audionav/replica/val_telephone/pointgoal_depth.yaml --model-dir data/models/replica/pointgoal_depth EVAL_CKPT_PATH_DIR data/models/replica/pointgoal_depth/data/ckpt.541.pth

@@ -1,0 +1,1 @@
+python ss_baselines/av_nav/run.py --run-type eval --exp-config ss_baselines/av_nav/config/audionav/replica/val_telephone/audiopointgoal_blind.yaml --model-dir data/models/replica/audiopointgoal_blind EVAL_CKPT_PATH_DIR data/models/replica/audiopointgoal_blind/data/ckpt.541.pth
