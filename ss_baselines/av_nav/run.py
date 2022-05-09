@@ -74,10 +74,12 @@ def main():
     )
     parser.add_argument("--depth-sample", default=0, type=int, help='sample depth every % steps')
     parser.add_argument("--depth_penalty", default=0, type=float)
+    parser.add_argument("--load_ckpt", default="", type=str)
     args = parser.parse_args()
 
     if args.eval_best:
-        best_ckpt_idx = find_best_ckpt_idx(os.path.join(args.model_dir, 'tb'))
+        # best_ckpt_idx = find_best_ckpt_idx(os.path.join(args.model_dir, 'tb'))
+        best_ckpt_idx = 142
         best_ckpt_path = os.path.join(args.model_dir, 'data', f'ckpt.{best_ckpt_idx}.pth')
         print(f'Evaluating the best checkpoint: {best_ckpt_path}')
         args.opts += ['EVAL_CKPT_PATH_DIR', best_ckpt_path]
@@ -96,6 +98,8 @@ def main():
     level = logging.DEBUG if config.DEBUG else logging.INFO
     logging.basicConfig(level=level, format='%(asctime)s, %(levelname)s: %(message)s',
                         datefmt="%Y-%m-%d %H:%M:%S")
+    if len(args.load_ckpt) > 0:
+        trainer.load_checkpoint(args.load_ckpt)
 
     if args.run_type == "train":
         trainer.train()

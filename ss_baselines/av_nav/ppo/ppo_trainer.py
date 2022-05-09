@@ -459,6 +459,7 @@ class PPOTrainer(BaseRLTrainer):
         torch.manual_seed(self.config.SEED)
             
         # Map location CPU is almost always better than mapping to a CUDA device.
+        print("Checkpoint Path:", checkpoint_path, checkpoint_index)
         ckpt_dict = self.load_checkpoint(checkpoint_path, map_location="cpu")
 
         if self.config.EVAL.USE_CKPT_CONFIG:
@@ -548,10 +549,18 @@ class PPOTrainer(BaseRLTrainer):
         num_actions = self.envs.action_spaces[0].n
 
         t = tqdm(total=self.config.TEST_EPISODE_COUNT)
+        iii = 0
+        sw_cnt = 0
         while (
             len(stats_episodes) < self.config.TEST_EPISODE_COUNT
             and self.envs.num_envs > 0
         ):
+            if iii % 10 == 0:
+                if iii == 0:
+                    print("Step 0")
+                else:
+                    print(f"Step {iii} SW: {sw_cnt / iii}")
+                iii += 1
             current_episodes = self.envs.current_episodes()
 
             with torch.no_grad():
@@ -569,6 +578,8 @@ class PPOTrainer(BaseRLTrainer):
             sw = torch.zeros((self.envs.num_envs,))
             if self.depth_penalty != 0:
                 sw = (actions // num_actions).cpu().squeeze().view(self.envs.num_envs,)
+                if sw[0].item():
+                    sw_cnt += 1
             else:
                 sw[...] = True
 
@@ -595,6 +606,8 @@ class PPOTrainer(BaseRLTrainer):
             if config.DISPLAY_RESOLUTION != model_resolution:
                 resize_observation(observations, model_resolution)
             batch = batch_obs(observations, self.device)
+            # if not torch.all(sw):
+                # pdb.set_trace()
 
             not_done_masks = torch.tensor(
                 [[0.0] if done else [1.0] for done in dones],
