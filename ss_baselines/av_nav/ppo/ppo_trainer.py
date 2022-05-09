@@ -496,8 +496,8 @@ class PPOTrainer(BaseRLTrainer):
         )
         if self.config.DISPLAY_RESOLUTION != model_resolution:
             observation_space = self.envs.observation_spaces[0]
-            observation_space.spaces['depth'].shape = (model_resolution, model_resolution, 1)
-            observation_space.spaces['rgb'].shape = (model_resolution, model_resolution, 1)
+            observation_space.spaces['depth']._shape = (model_resolution, model_resolution, 1)
+            observation_space.spaces['rgb']._shape = (model_resolution, model_resolution, 1)
         else:
             observation_space = self.envs.observation_spaces[0]
         self._setup_actor_critic_agent(ppo_cfg, observation_space)
@@ -555,12 +555,11 @@ class PPOTrainer(BaseRLTrainer):
             len(stats_episodes) < self.config.TEST_EPISODE_COUNT
             and self.envs.num_envs > 0
         ):
-            if iii % 10 == 0:
-                if iii == 0:
-                    print("Step 0")
-                else:
-                    print(f"Step {iii} SW: {sw_cnt / iii}")
-                iii += 1
+            if iii == 0:
+                print("Step 0")
+            else:
+                print(f"Step {iii} SW: {sw_cnt / iii}")
+            iii += 1
             current_episodes = self.envs.current_episodes()
 
             with torch.no_grad():
@@ -573,6 +572,8 @@ class PPOTrainer(BaseRLTrainer):
                 )
 
                 prev_actions.copy_(actions)
+            
+            print("Inference done")
 
             outputs = self.envs.step([a[0].item() % num_actions for a in actions])
             sw = torch.zeros((self.envs.num_envs,))
@@ -583,15 +584,21 @@ class PPOTrainer(BaseRLTrainer):
             else:
                 sw[...] = True
 
+            print("SW done")
             observations, rewards, dones, infos = [
                 list(x) for x in zip(*outputs)
             ]
             for i in range(self.envs.num_envs):
                 if not sw[i].item():
                     observations[i]['depth'][...] = 0
+                    print("Depth removed")
+                # pdb.set_trace()
                 if len(self.config.VIDEO_OPTION) > 0:
                     if config.TASK_CONFIG.SIMULATOR.CONTINUOUS_VIEW_CHANGE and 'intermediate' in observations[i]:
+                        print(f"{len(observations[i]['intermediate'])} intermediate frames")
                         for observation in observations[i]['intermediate']:
+                            if not sw[i].item():
+                                observation['depth'][...] = 0
                             frame = observations_to_image(observation, infos[i])
                             rgb_frames[i].append(frame)
                         del observations[i]['intermediate']
@@ -602,12 +609,11 @@ class PPOTrainer(BaseRLTrainer):
                     frame = observations_to_image(observations[i], infos[i])
                     rgb_frames[i].append(frame)
                     audios[i].append(observations[i]['audiogoal'])
+            print("Observations to image done")
 
             if config.DISPLAY_RESOLUTION != model_resolution:
                 resize_observation(observations, model_resolution)
             batch = batch_obs(observations, self.device)
-            # if not torch.all(sw):
-                # pdb.set_trace()
 
             not_done_masks = torch.tensor(
                 [[0.0] if done else [1.0] for done in dones],
@@ -620,6 +626,7 @@ class PPOTrainer(BaseRLTrainer):
             ).unsqueeze(1)
             current_episode_reward += rewards
             next_episodes = self.envs.current_episodes()
+            print("Get next episode")
             envs_to_pause = []
             for i in range(self.envs.num_envs):
                 # pause envs which runs out of episodes
